@@ -4,5 +4,5 @@ google-cloud-speech==2.20.0
 google-cloud-translate==3.8.4
 google-cloud-texttospeech==2.14.1
 google-cloud-aiplatform==1.39.0
-vertexai==1.39.0
+vertexai==1.71.0  # Updated to a valid version
 pydub==0.25.1
