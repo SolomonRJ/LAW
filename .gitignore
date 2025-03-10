@@ -2,3 +2,4 @@ services-account.json
 __pycache__/
 env/
 venv/
+services_account.json
