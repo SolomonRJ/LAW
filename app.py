@@ -1,11 +1,22 @@
 import os
-import io
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import JSONResponse, FileResponse
+from google.cloud import speech, translate_v2 as translate, texttospeech
 import vertexai
 from vertexai.generative_models import GenerativeModel, SafetySetting
-from google.cloud import speech, translate_v2 as translate, texttospeech
-from pydub import AudioSegment
+from fastapi.middleware.cors import CORSMiddleware
+
+# Initialize FastAPI
+app = FastAPI()
+
+# Enable CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins, you can restrict this later
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Set Google Cloud authentication
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "services_account.json"
@@ -17,6 +28,14 @@ LOCATION = "us-central1"
 # Initialize FastAPI
 app = FastAPI()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins, you can restrict this later
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
+
 # Initialize Google Clients
 speech_client = speech.SpeechClient()
 translate_client = translate.Client()
@@ -26,7 +45,7 @@ tts_client = texttospeech.TextToSpeechClient()
 vertexai.init(
     project=PROJECT_ID,
     location=LOCATION,
-    api_endpoint="us-central1-aiplatform.googleapis.com"    
+    api_endpoint="us-central1-aiplatform.googleapis.com"
 )
 
 # Safety settings (Optional)
@@ -38,20 +57,6 @@ safety_settings = [
 ]
 
 gemini_model = GenerativeModel("gemini-1.5-pro-002")
-
-def speech_to_text(audio_bytes, language_code="kn-IN"):
-    audio = speech.RecognitionAudio(content=audio_bytes)
-    config = speech.RecognitionConfig(
-        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=48000,
-        language_code=language_code,
-    )
-    response = speech_client.recognize(config=config, audio=audio)
-    return response.results[0].alternatives[0].transcript if response.results else None
-
-def translate_text(text, target_language="en"):
-    translation = translate_client.translate(text, target_language=target_language)
-    return translation["translatedText"]
 
 def process_with_gemini(input_text):
     template = f"""
@@ -67,6 +72,20 @@ def process_with_gemini(input_text):
     response = chat.send_message(template)
     return response.text
 
+def speech_to_text(audio_bytes, language_code="kn-IN"):
+    audio = speech.RecognitionAudio(content=audio_bytes)
+    config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=16000,
+        language_code=language_code,
+    )
+    response = speech_client.recognize(config=config, audio=audio)
+    return response.results[0].alternatives[0].transcript if response.results else None
+
+def translate_text(text, target_language="en"):
+    translation = translate_client.translate(text, target_language=target_language)
+    return translation["translatedText"]
+
 def text_to_speech(text, output_file="output.mp3", language_code="kn-IN"):
     synthesis_input = texttospeech.SynthesisInput(text=text)
     voice = texttospeech.VoiceSelectionParams(
@@ -79,16 +98,27 @@ def text_to_speech(text, output_file="output.mp3", language_code="kn-IN"):
         out.write(response.audio_content)
     return output_file
 
+
+@app.post("/process-text/")
+async def process_text(input: dict):
+    input_text = input.get("text", "")
+    if not input_text:
+        return JSONResponse(content={"error": "No text provided!"}, status_code=400)
+
+    legal_response = process_with_gemini(input_text)
+    return {"response": legal_response}
+
+
 @app.post("/process-audio/")
 async def process_audio(file: UploadFile = File(...)):
     audio_bytes = await file.read()
     text = speech_to_text(audio_bytes)
     if not text:
-        return {"error": "No speech detected!"}
-    
+        return JSONResponse(content={"error": "No speech detected!"}, status_code=400)
+
     translated_text = translate_text(text, "en")
     legal_response = process_with_gemini(translated_text)
     final_translation = translate_text(legal_response, "kn")
     output_audio_path = text_to_speech(final_translation)
-    
+
     return FileResponse(output_audio_path, media_type="audio/mpeg", filename="translated_audio.mp3")
